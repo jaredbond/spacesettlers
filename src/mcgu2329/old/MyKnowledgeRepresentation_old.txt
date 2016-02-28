@@ -1,0 +1,154 @@
+package mcgu2329;
+
+import java.util.HashMap;
+import java.util.Set;
+import java.util.UUID;
+
+import spacesettlers.actions.AbstractAction;
+import spacesettlers.objects.Asteroid;
+import spacesettlers.objects.Base;
+import spacesettlers.objects.Beacon;
+import spacesettlers.objects.Ship;
+import spacesettlers.simulator.Toroidal2DPhysics;
+import spacesettlers.utilities.Position;
+
+class MyKnowledgeRepresentation {
+	/**
+	 * Closest enemy ship in space
+	 */
+	Ship nearestEnemy;
+	/**
+	 * Closest base in space
+	 */
+	Base nearestBase;
+	/**
+	 * Best valued asteroid based on proximity and amount of resources
+	 */
+	Asteroid bestAsteroid;
+	/**
+	 * Closest beacon in space
+	 */
+	Beacon nearestBeacon;
+	/**
+	 * Current action being undertaken
+	 */
+	AbstractAction currentAction;
+	/**
+	 * Current position of ship in space
+	 */
+	Position currentPosition;
+	/**
+	 * Current level of energy of ship (adjusted by 500 to ensure we continue to chase weakened enemies)
+	 */
+	double effectiveEnergyLevel;
+	
+	/**
+	 * Constructor that generates state information relative to given ship (egotistical approach)
+	 * 
+	 * @param space state of the map
+	 * @param ship the ship which other info is measured from
+	 */
+	MyKnowledgeRepresentation(Toroidal2DPhysics space, Ship ship, HashMap <UUID, Ship> asteroidToShipMap) {
+		nearestEnemy = pickNearestEnemyShip(space, ship);
+		nearestBase = findNearestBase(space, ship);
+		bestAsteroid = pickHighestValueFreeAsteroid(space, ship, asteroidToShipMap);
+		nearestBeacon = pickNearestBeacon(space, ship);
+		currentAction = ship.getCurrentAction();
+		currentPosition = ship.getPosition();
+		effectiveEnergyLevel = ship.getEnergy() + 500;
+	}
+	
+	/**
+	 * Find the nearest ship on another team and aim for it
+	 * @param space
+	 * @param ship
+	 * @return
+	 */
+	private Ship pickNearestEnemyShip(Toroidal2DPhysics space, Ship ship) {
+		double minDistance = Double.POSITIVE_INFINITY;
+		Ship nearestShip = null;
+		for (Ship otherShip : space.getShips()) {
+			// don't aim for our own team (or ourself)
+			if (otherShip.getTeamName().equals(ship.getTeamName())) {
+				continue;
+			}
+			
+			double distance = space.findShortestDistance(ship.getPosition(), otherShip.getPosition());
+			if (distance < minDistance) {
+				minDistance = distance;
+				nearestShip = otherShip;
+			}
+		}
+		
+		return nearestShip;
+	}
+
+	/**
+	 * Find the base for this team nearest to this ship
+	 * 
+	 * @param space
+	 * @param ship
+	 * @return
+	 */
+	private Base findNearestBase(Toroidal2DPhysics space, Ship ship) {
+		double minDistance = Double.MAX_VALUE;
+		Base nearestBase = null;
+
+		for (Base base : space.getBases()) {
+			if (base.getTeamName().equalsIgnoreCase(ship.getTeamName())) {
+				double dist = space.findShortestDistance(ship.getPosition(), base.getPosition());
+				if (dist < minDistance) {
+					minDistance = dist;
+					nearestBase = base;
+				}
+			}
+		}
+		return nearestBase;
+	}
+
+	/**
+	 * Returns the asteroid of highest value that isn't already being chased by this team
+	 * 
+	 * @return
+	 */
+	private Asteroid pickHighestValueFreeAsteroid(Toroidal2DPhysics space, Ship ship, HashMap <UUID, Ship> asteroidToShipMap) {
+		Set<Asteroid> asteroids = space.getAsteroids();
+		int bestMoney = Integer.MIN_VALUE;
+		Asteroid bestAsteroid = null;
+
+		for (Asteroid asteroid : asteroids) {
+			if (!asteroidToShipMap.containsKey(asteroid)) {
+				if (asteroid.isMineable() && asteroid.getResources().getTotal() > bestMoney) {
+					bestMoney = asteroid.getResources().getTotal();
+					bestAsteroid = asteroid;
+				}
+			}
+		}
+		//System.out.println("Best asteroid has " + bestMoney);
+		return bestAsteroid;
+	}
+
+	/**
+	 * Find the nearest beacon to this ship
+	 * @param space
+	 * @param ship
+	 * @return
+	 */
+	private Beacon pickNearestBeacon(Toroidal2DPhysics space, Ship ship) {
+		// get the current beacons
+		Set<Beacon> beacons = space.getBeacons();
+
+		Beacon closestBeacon = null;
+		double bestDistance = Double.POSITIVE_INFINITY;
+
+		for (Beacon beacon : beacons) {
+			double dist = space.findShortestDistance(ship.getPosition(), beacon.getPosition());
+			if (dist < bestDistance) {
+				bestDistance = dist;
+				closestBeacon = beacon;
+			}
+		}
+
+		return closestBeacon;
+	}
+}

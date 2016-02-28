@@ -1,0 +1,321 @@
+package mcgu2329;
+
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Random;
+import java.util.Set;
+import java.util.UUID;
+
+import spacesettlers.clients.TeamClient;
+import spacesettlers.actions.AbstractAction;
+import spacesettlers.actions.DoNothingAction;
+import spacesettlers.actions.MoveToObjectAction;
+import spacesettlers.actions.PurchaseCosts;
+import spacesettlers.actions.PurchaseTypes;
+import spacesettlers.graphics.SpacewarGraphics;
+import spacesettlers.graphics.BeaconGraphics;
+import spacesettlers.graphics.LineGraphics;
+import spacesettlers.objects.AbstractActionableObject;
+import spacesettlers.objects.AbstractObject;
+import spacesettlers.objects.Asteroid;
+import spacesettlers.objects.Base;
+import spacesettlers.objects.Beacon;
+import spacesettlers.objects.Ship;
+import spacesettlers.objects.powerups.SpaceSettlersPowerupEnum;
+import spacesettlers.objects.resources.ResourcePile;
+import spacesettlers.simulator.Toroidal2DPhysics;
+import spacesettlers.utilities.Position;
+
+/**
+ * Modification of the aggressive heuristic asteroid collector to a team that only has one ship.  It 
+ * tries to collect resources but it also tries to shoot other ships if they are nearby.
+ * 
+ * @author amy
+ */
+public class MyAggressiveAgent extends TeamClient {
+	HashMap <UUID, Ship> asteroidToShipMap;
+	HashMap <UUID, Boolean> aimingForBase;
+	UUID asteroidCollectorID;
+	double weaponsProbability = 1;
+	boolean shouldShoot = false;
+	int myTimestep = 0;
+    ArrayList<SpacewarGraphics> graphicsToAdd;
+
+	/**
+	 * Assigns ships to asteroids and beacons, as described above
+	 */
+	public Map<UUID, AbstractAction> getMovementStart(Toroidal2DPhysics space,
+			Set<AbstractActionableObject> actionableObjects) {
+		HashMap<UUID, AbstractAction> actions = new HashMap<UUID, AbstractAction>();
+		// loop through each ship
+		for (AbstractObject actionable :  actionableObjects) {
+			if (actionable instanceof Ship) {
+				Ship ship = (Ship) actionable;
+
+				// the first time we initialize, decide which ship is the asteroid collector
+				if (asteroidCollectorID == null) {
+					asteroidCollectorID = ship.getId();
+				}
+				
+				//AbstractAction action = getAggressiveAsteroidCollectorAction(space, ship);
+				AbstractAction action = MyAggressiveAction(space, ship);
+
+				actions.put(ship.getId(), action);
+				
+			} else {
+				// it is a base.  Heuristically decide when to use the shield (TODO)
+				actions.put(actionable.getId(), new DoNothingAction());
+			}
+		} 
+		return actions;
+	}
+	
+	/**
+	 * Aggressive heuristic that prioritizes attacking and killing enemy ships until significantly weakened
+	 * It then flees to the closest beacon, or in a random direction if no beacon is nearby
+	 * If no enemy is nearby, it also seeks a beacon
+	 * 
+	 * @param space current map of space
+	 * @param ship whose action is to be determined
+	 * @return action to be taken
+	 */
+	private AbstractAction MyAggressiveAction(Toroidal2DPhysics space, Ship ship) {
+		MyKnowledgeRepresentation knowledge = new MyKnowledgeRepresentation(space, ship, asteroidToShipMap);
+		AbstractAction current = knowledge.currentAction;
+		Position currentPosition = knowledge.currentPosition;
+		AbstractAction newAction = null;
+		
+        
+        LineGraphics line;
+        
+        
+        
+		if (current == null || current.isMovementFinished(space)) { 
+			// Am I doing something?
+			Ship enemy = knowledge.nearestEnemy;
+			
+			if (enemy != null) { // Is there an enemy nearby?
+				if (enemy.getEnergy() < knowledge.effectiveEnergyLevel) { // Is the enemy weaker than me?
+					// ATTACK!!
+                    if (space.findShortestDistance(currentPosition, enemy.getPosition()) < 500.0)
+                        shouldShoot = true;
+                    else
+                        shouldShoot = false;
+					newAction = new MoveToObjectAction(space, currentPosition, enemy);
+                    line = new LineGraphics(currentPosition, enemy.getPosition(), space.findShortestDistanceVector(currentPosition, enemy.getPosition()));
+                    line.setLineColor(super.getTeamColor());
+                    graphicsToAdd.add(line);
+                    //System.out.println("ATTACK! Enemy is " + space.findShortestDistance(currentPosition, enemy.getPosition()) + " distance away.");
+					return newAction;
+				} else { // The enemy is stronger than me
+					// FLEE!!!
+					Beacon beacon = knowledge.nearestBeacon;
+					if (beacon != null) { // Flee to a beacon!
+						shouldShoot = false;
+						//newAction = new MoveToObjectAction(space, currentPosition, beacon);
+                        if (currentPosition.getTotalTranslationalVelocity() > 60.0) {
+                            newAction = new MoveToObjectAction(space, currentPosition, beacon);
+                            line = new LineGraphics(currentPosition, beacon.getPosition(), space.findShortestDistanceVector(currentPosition, beacon.getPosition()));
+                            line.setLineColor(super.getTeamColor());
+                            graphicsToAdd.add(line);
+                            //System.out.println("IM ALREADY FLEEING FAST TOWARDS A BEACON");
+                        } else {
+							newAction = new FastMove(space.getCurrentTimestep(), beacon.getPosition());
+                            line = new LineGraphics(currentPosition, beacon.getPosition(), space.findShortestDistanceVector(currentPosition, beacon.getPosition()));
+                            line.setLineColor(super.getTeamColor());
+                            graphicsToAdd.add(line);
+
+                            //System.out.println("FLEE FAST TO A BEACON");
+                        }
+                        return newAction;
+					} else { // No beacon, just flee!!!
+						shouldShoot = false;
+						Position newGoal = space.getRandomFreeLocationInRegion(new Random(), ship.SHIP_RADIUS, (int)ship.getPosition().getX(), (int)ship.getPosition().getY(), 200);
+						//newAction = new MoveAction(space, currentPosition, newGoal);
+                        line = new LineGraphics(currentPosition, newGoal, space.findShortestDistanceVector(currentPosition, newGoal));
+                        line.setLineColor(super.getTeamColor());
+                        graphicsToAdd.add(line);
+						newAction = new FastMove(space.getCurrentTimestep(), newGoal);
+                        //System.out.println("FLEE FAST RANDOMLY");
+						return newAction;
+					}
+				}
+			} else { // No enemy nearby
+				Beacon beacon = knowledge.nearestBeacon;
+				if (beacon != null) { // Be productive
+					shouldShoot = false;
+					//newAction = new MoveToObjectAction(space, currentPosition, beacon);
+                    if (currentPosition.getTotalTranslationalVelocity() > 60.0) {
+						newAction = new DoNothingAction();
+                        //System.out.println("IM ALREADY HEADED FAST TO A BEACON");
+                    } else {
+                        line = new LineGraphics(currentPosition, beacon.getPosition(), space.findShortestDistanceVector(currentPosition, beacon.getPosition()));
+                        line.setLineColor(super.getTeamColor());
+                        graphicsToAdd.add(line);
+						newAction = new FastMove(space.getCurrentTimestep(), beacon.getPosition());
+                        //System.out.println("HEAD FAST TO A BEACON");
+                    }
+                    return newAction;
+				} else { // No beacon
+					shouldShoot = false;
+					newAction = new DoNothingAction();
+                    //System.out.println("NO BEACON, NO NOTHING");
+					return newAction;
+				}
+			}
+		}
+		//check if in danger of death 
+		if (ship.getEnergy() < 1000) {
+			Beacon beacon = knowledge.nearestBeacon;
+			// if there is no beacon, then just skip a turn
+			if (beacon == null) {
+				newAction = new DoNothingAction();
+			} else {
+				newAction = new MoveToObjectAction(space, currentPosition, beacon);
+                line = new LineGraphics(currentPosition, beacon.getPosition(), space.findShortestDistanceVector(currentPosition, beacon.getPosition()));
+                line.setLineColor(super.getTeamColor());
+                graphicsToAdd.add(line);
+			}
+			aimingForBase.put(ship.getId(), false);
+			shouldShoot = false;
+			return newAction;
+		}
+		
+		return ship.getCurrentAction();
+	}
+
+	@Override
+	public void getMovementEnd(Toroidal2DPhysics space, Set<AbstractActionableObject> actionableObjects) {
+		ArrayList<Asteroid> finishedAsteroids = new ArrayList<Asteroid>();
+
+		for (UUID asteroidId : asteroidToShipMap.keySet()) {
+			Asteroid asteroid = (Asteroid) space.getObjectById(asteroidId);
+			if (asteroid != null && !asteroid.isAlive()) {
+				finishedAsteroids.add(asteroid);
+				//System.out.println("Removing asteroid from map");
+			}
+		}
+
+		for (Asteroid asteroid : finishedAsteroids) {
+			asteroidToShipMap.remove(asteroid);
+		}
+	}
+
+	@Override
+	public void initialize(Toroidal2DPhysics space) {
+		asteroidToShipMap = new HashMap<UUID, Ship>();
+		asteroidCollectorID = null;
+		aimingForBase = new HashMap<UUID, Boolean>();
+        graphicsToAdd = new ArrayList<SpacewarGraphics>();
+	}
+
+	@Override
+	public void shutDown(Toroidal2DPhysics space) {
+		// TODO Auto-generated method stub
+	}
+
+	@Override
+	public Set<SpacewarGraphics> getGraphics() {
+		// TODO Auto-generated method stub
+        HashSet<SpacewarGraphics> graphics = new HashSet<SpacewarGraphics>();
+        graphics.addAll(graphicsToAdd);
+        graphicsToAdd.clear();
+        //System.out.println("Printing");
+		return graphics;
+	}
+
+	@Override
+	/**
+	 * If there is enough resourcesAvailable, buy a base.  Place it by finding a ship that is sufficiently
+	 * far away from the existing bases
+	 */
+	public Map<UUID, PurchaseTypes> getTeamPurchases(Toroidal2DPhysics space,
+			Set<AbstractActionableObject> actionableObjects, 
+			ResourcePile resourcesAvailable, 
+			PurchaseCosts purchaseCosts) {
+
+		HashMap<UUID, PurchaseTypes> purchases = new HashMap<UUID, PurchaseTypes>();
+		double BASE_BUYING_DISTANCE = 200;
+		boolean bought_base = false;
+
+		if (purchaseCosts.canAfford(PurchaseTypes.BASE, resourcesAvailable)) {
+			for (AbstractActionableObject actionableObject : actionableObjects) {
+				if (actionableObject instanceof Ship) {
+					Ship ship = (Ship) actionableObject;
+					Set<Base> bases = space.getBases();
+
+					// how far away is this ship to a base of my team?
+					double maxDistance = Double.MIN_VALUE;
+					for (Base base : bases) {
+						if (base.getTeamName().equalsIgnoreCase(getTeamName())) {
+							double distance = space.findShortestDistance(ship.getPosition(), base.getPosition());
+							if (distance > maxDistance) {
+								maxDistance = distance;
+							}
+						}
+					}
+
+					if (maxDistance > BASE_BUYING_DISTANCE) {
+						purchases.put(ship.getId(), PurchaseTypes.BASE);
+						bought_base = true;
+						//System.out.println("Buying a base!!");
+						break;
+					}
+				}
+			}		
+		} 
+		
+		// see if you can buy EMPs
+		if (purchaseCosts.canAfford(PurchaseTypes.POWERUP_EMP_LAUNCHER, resourcesAvailable)) {
+			for (AbstractActionableObject actionableObject : actionableObjects) {
+				if (actionableObject instanceof Ship) {
+					Ship ship = (Ship) actionableObject;
+					
+					if (!ship.getId().equals(asteroidCollectorID) && ship.isValidPowerup(PurchaseTypes.POWERUP_EMP_LAUNCHER.getPowerupMap())) {
+						purchases.put(ship.getId(), PurchaseTypes.POWERUP_EMP_LAUNCHER);
+					}
+				}
+			}		
+		} 
+		
+
+		// can I buy a ship?
+		if (purchaseCosts.canAfford(PurchaseTypes.SHIP, resourcesAvailable) && bought_base == false) {
+			for (AbstractActionableObject actionableObject : actionableObjects) {
+				if (actionableObject instanceof Base) {
+					Base base = (Base) actionableObject;
+					
+					purchases.put(base.getId(), PurchaseTypes.SHIP);
+					break;
+				}
+			}
+		}
+		return purchases;
+	}
+
+	/**
+	 * The aggressive asteroid collector shoots if there is an enemy nearby! 
+	 * 
+	 * @param space
+	 * @param actionableObjects
+	 * @return
+	 */
+	@Override
+	public Map<UUID, SpaceSettlersPowerupEnum> getPowerups(Toroidal2DPhysics space,
+			Set<AbstractActionableObject> actionableObjects) {
+		HashMap<UUID, SpaceSettlersPowerupEnum> powerUps = new HashMap<UUID, SpaceSettlersPowerupEnum>();
+
+		Random random = new Random();
+		for (AbstractActionableObject actionableObject : actionableObjects){
+			SpaceSettlersPowerupEnum powerup = SpaceSettlersPowerupEnum.values()[random.nextInt(SpaceSettlersPowerupEnum.values().length)];
+			if (actionableObject.isValidPowerup(powerup) && random.nextDouble() < weaponsProbability && shouldShoot){
+				powerUps.put(actionableObject.getId(), powerup);
+			}
+		}
+		
+		return powerUps;
+	}
+
+}

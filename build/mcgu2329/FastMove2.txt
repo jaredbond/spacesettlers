@@ -1,0 +1,77 @@
+package mcgu2329;
+
+import spacesettlers.actions.AbstractAction;
+import spacesettlers.objects.Ship;
+import spacesettlers.simulator.Toroidal2DPhysics;
+import spacesettlers.utilities.Movement;
+import spacesettlers.utilities.Position;
+import spacesettlers.utilities.Vector2D;
+import spacesettlers.objects.Beacon;
+
+/**
+ * 
+ * Modification of MoveAction class. This class does not slow down when approaching
+ * beacons or asteroids; it always moves full speed. 
+ * @author Sean
+ */
+class FastMove extends AbstractAction {
+	/**
+	 * stores the target position for this move
+	 */
+	Beacon targetBeacon;
+	/**
+	 * stores the start time of this move
+	 */
+	int startTime;
+	/**
+	 * stores the end time of this move
+	 */
+	int endTime;
+	
+	/**
+	 * Constructor that builds a FastMove action given a startTime and targetPosition
+	 * 
+	 * @param startTime 
+	 * @param targetPosition
+	 */
+	FastMove(int startTime, Beacon beacon) {
+		this.startTime = startTime;
+		this.endTime = startTime + 200;
+		this.targetBeacon = beacon;
+	}
+	
+	/**
+	 * Computes a movement vector given start and end positions
+	 * 
+	 * @param start beginning position
+	 * @param finish end position
+	 * @return vector representing direction of movement
+	 */
+	private Vector2D posToVec(Position start, Position finish) {
+		// I believe the y-coordinate system is flipped
+		double deltaX, deltaY;
+		deltaX = finish.getX() - start.getX();
+		deltaY = finish.getY() - start.getY();
+		if (deltaX > deltaY) {
+			deltaY = (deltaY * 50 / deltaX);
+			deltaX = 50.0;
+		} else {
+			deltaX = (deltaX * 50 / deltaY);
+			deltaY = 50;
+		}
+		return new Vector2D(deltaX, deltaY);
+	}
+
+	@Override
+	public Movement getMovement(Toroidal2DPhysics space, Ship ship) {
+		Movement retMovement = new Movement();
+		retMovement.setTranslationalAcceleration(posToVec(ship.getPosition(), targetPos));
+		return retMovement;
+	}
+
+	@Override
+	public boolean isMovementFinished(Toroidal2DPhysics space) {
+		return true; // Check always
+	}
+	
+}
